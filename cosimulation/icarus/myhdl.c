@@ -49,6 +49,54 @@ static PLI_INT32 change_callback(p_cb_data cb_data);
 
 static int init_pipes();
 
+#ifdef MYHDL_TRAFFIC_DEBUG
+FILE* myfp() {
+  static FILE* fp = NULL;
+  if (!fp) {
+    char filename[1000];
+    for (int i=0; i<1000; ++i) {
+      sprintf(filename, "traffic_%04d.log", i);
+      fp = fopen(filename, "r");
+      if (fp) fclose(fp);
+      else break;
+    }
+    fprintf(stderr, "Opened %s\n", filename);
+    fp = fopen(filename,"w");
+    if (!fp) {
+      vpi_printf((PLI_BYTE8*)"ERROR: cannot open traffic.log\n");
+      return NULL;
+    }
+  }
+  return fp;
+}
+
+ssize_t mywrite(int fd, const void *buf, size_t count) {
+  ssize_t got = write(fd, buf, count);
+  char buf2[MAXLINE];
+  memcpy(buf2, buf, count);
+  buf2[count] = '\0';
+  fprintf(myfp(),"-myhdl-wr-%d %s\n", (int)got, buf2);
+  fflush(myfp());
+  return got;
+}
+ssize_t myread(int fd, void *buf, size_t count) {
+  ssize_t got = read(fd, buf, count);
+  if (got>0) {
+    char buf2[MAXLINE];
+    memcpy(buf2, buf, count);
+    buf2[got] = '\0';
+    fprintf(myfp(),"-myhdl-rd-%d %s\n", (int)got, buf2);
+  } else {
+    fprintf(myfp(),"-myhdl-rd EOF %d\n", (int)got);
+  }
+  fflush(myfp());
+  return got;
+}
+#else
+# define myread read
+# define mywrite write
+#endif
+
 /* from Icarus */
 static myhdl_time64_t timestruct_to_time(const struct t_vpi_time*ts)
 {
@@ -133,10 +181,10 @@ static PLI_INT32 from_myhdl_calltf(PLI_BYTE8 *user_data)
     strcat(buf, s);
   }
   // write: FROM 0 <sig0name> <sig0size> <sig1name> <sig1size>...
-  n = write(wpipe, buf, strlen(buf));
+  n = mywrite(wpipe, buf, strlen(buf));
 
   // read: OK
-  if ((n = read(rpipe, buf, MAXLINE)) == 0) {
+  if ((n = myread(rpipe, buf, MAXLINE)) == 0) {
     vpi_printf("Info: MyHDL simulator down\n");
     vpi_control(vpiFinish, 1);  /* abort simulation */
     return(0);
@@ -213,10 +261,10 @@ static PLI_INT32 to_myhdl_calltf(PLI_BYTE8 *user_data)
     i++;
   }
   // write: TO 0 <sig0name> <sig0size> <sig1name> <sig1size>...
-  n = write(wpipe, buf, strlen(buf));
+  n = mywrite(wpipe, buf, strlen(buf));
 
   // read: OK
-  if ((n = read(rpipe, buf, MAXLINE)) == 0) {
+  if ((n = myread(rpipe, buf, MAXLINE)) == 0) {
     vpi_printf("ABORT from $to_myhdl\n");
     vpi_control(vpiFinish, 1);  /* abort simulation */
     return(0);
@@ -272,10 +320,10 @@ static PLI_INT32 readonly_callback(p_cb_data cb_data)
   if (start_flag) {
     start_flag = 0;
     // write: START
-    n = write(wpipe, "START", 5);  
+    n = mywrite(wpipe, "START", 5);
     // vpi_printf("INFO: RO cb at start-up\n");
     // read: OK
-    if ((n = read(rpipe, buf, MAXLINE)) == 0) {
+    if ((n = myread(rpipe, buf, MAXLINE)) == 0) {
       vpi_printf("ABORT from RO cb at start-up\n");
       vpi_control(vpiFinish, 1);  /* abort simulation */
     }  
@@ -309,9 +357,9 @@ static PLI_INT32 readonly_callback(p_cb_data cb_data)
     i++;
   }
   // write: <timehi> <timelo> <veriloghi> <veriloglo> <sig0name> <sig0hexval>...
-  n = write(wpipe, buf, strlen(buf));
+  n = mywrite(wpipe, buf, strlen(buf));
   // read: <myhdl_time> [<sig0value> <sig1value>...]
-  if ((n = read(rpipe, buf, MAXLINE)) == 0) {
+  if ((n = myread(rpipe, buf, MAXLINE)) == 0) {
     // vpi_printf("ABORT from RO cb\n");
     vpi_control(vpiFinish, 1);  /* abort simulation */
     return(0);
